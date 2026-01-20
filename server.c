@@ -7,10 +7,12 @@
 #include <string.h>
 #include <errno.h>
 #include <pthread.h>
+#include <arpa/inet.h>
 #include "helper.h"
 
 //********************GLOBAL DATA_STRUCTURES & CONSTANTS****************************
 #define bufsize 1000
+# define PORTNUM "80"
 
 // mutex lock for global data access
 pthread_mutex_t mutex;
@@ -46,7 +48,7 @@ void add_user(struct client *user){
  * @brief-: delete client from thr global list
  *  O(n) complexity
  */
-void delete_user(confd){
+void delete_user(int confd){
    struct client *user=header;
    struct client *previous=NULL;
    // identify the user
@@ -140,12 +142,14 @@ void send_msg(int confd,char* msg, char* receiver, char* sender){
     if(receiver == NULL)
      while (user != NULL){
       if (user->confd == confd){
-         strcpy(response,"msg sent\n\r\n");
+         /* strcpy(response,"msg sent\n\r\n"); */
+         snprintf(response, sizeof(response), "msg sent\n\r\n");
          rio_writen(user->confd,response,strlen(response));
        }
 
       else{
-         sprintf(response,"start\n%s:%s\n\r\n",sender,msg);
+         /* sprintf(response,"start\n%s:%s\n\r\n",sender,msg); */
+         snprintf(response, sizeof(response), "start\n%s:%s\n\r\n",sender,msg);
          rio_writen(user->confd,response,strlen(response));
       }
       user=user->next;
@@ -153,15 +157,18 @@ void send_msg(int confd,char* msg, char* receiver, char* sender){
    else{
        while (user != NULL){
          if(!strcmp(user->name,receiver)){
-           sprintf(response,"start\n%s:%s\n\r\n",sender,msg);
+           /* sprintf(response,"start\n%s:%s\n\r\n",sender,msg); */
+           snprintf(response, sizeof(response), "start\n%s:%s\n\r\n",sender,msg);
            rio_writen(user->confd,response,strlen(response));
-           strcpy(response,"msg sent\n\r\n");
+           /* strcpy(response,"msg sent\n\r\n"); */
+           snprintf(response, sizeof(response), "msg sent\n\r\n");
            rio_writen(confd,response,strlen(response));
            return;
          }
          user=user->next;
        }
-        strcpy(response,"user not found\n\r\n");
+        /* strcpy(response,"user not found\n\r\n"); */
+        snprintf(response, sizeof(response), "user not found\n\r\n");
         rio_writen(confd,response,strlen(response));
 
    }
@@ -182,28 +189,57 @@ void evaluate(char *buf ,int confd ,char *username){
 
 
   if(!strcmp(buf,"help")){
-        sprintf(response,"msg \"text\" : send the msg to all the clients online\n");
-        sprintf(response,"%smsg \"text\" user :send the msg to a particular client\n",response);
-        sprintf(response,"%sonline : get the username of all the clients online\n",response);
-        sprintf(response,"%squit : exit the chatroom\n\r\n",response);
-        rio_writen(confd,response,strlen(response));
+        /* sprintf(response,"msg \"text\" : send the msg to all the clients online\n"); */
+        /* sprintf(response,"%smsg \"text\" user :send the msg to a particular client\n",response); */
+        /* sprintf(response,"%sonline : get the username of all the clients online\n",response); */
+        /* sprintf(response,"%squit : exit the chatroom\n\r\n",response); */
+        {
+          const char help_msg[] =
+              "msg \"text\" : send the msg to all the clients online\n"
+              "msg \"text\" user :send the msg to a particular client\n"
+              "online : get the username of all the clients online\n"
+              "quit : exit the chatroom\n\r\n";
+          rio_writen(confd,help_msg,sizeof(help_msg) - 1);
+        }
         return;
    }
    // get the online user name
    if (!strcmp(buf,"online")){
+        size_t used=0;
+        int written;
         // empty the buffer
         response[0]='\0';
         //global access should be exclusive
         pthread_mutex_lock(&mutex);
+        user=header;
         while(user!=NULL){
-        sprintf(response,"%s%s\n",response,user->name);
+        /* sprintf(response,"%s%s\n",response,user->name); */
+        written = snprintf(response + used, sizeof(response) - used, "%s\n",user->name);
+        if (written < 0) {
+          response[0]='\0';
+          used=0;
+          break;
+        }
+        if ((size_t)written >= sizeof(response) - used) {
+          used = sizeof(response) - 1;
+          break;
+        }
+        used += (size_t)written;
         user=user->next;
 
         }
-    sprintf(response,"%s\r\n",response);
+    /* sprintf(response,"%s\r\n",response); */
     //global access should be exclusive
     pthread_mutex_unlock(&mutex);
-    rio_writen(confd,response,strlen(response));
+    if (used + 2 < sizeof(response)) {
+      response[used++] = '\r';
+      response[used++] = '\n';
+      response[used] = '\0';
+    } else if (sizeof(response) > 0) {
+      response[sizeof(response) - 1] = '\0';
+      used = sizeof(response) - 1;
+    }
+    rio_writen(confd,response,used);
     return;
    }
 
@@ -211,23 +247,31 @@ void evaluate(char *buf ,int confd ,char *username){
       pthread_mutex_lock(&mutex);
       delete_user(confd);
       pthread_mutex_unlock(&mutex);
-      strcpy(response,"exit");
+      /* strcpy(response,"exit"); */
+      snprintf(response, sizeof(response), "exit");
       rio_writen(confd,response,strlen(response));
       close(confd);
       return;
 
    }
 
-   sscanf(buf,"%s \" %[^\"] \"%s",keyword,msg,receiver);
+   /* sscanf(buf,"%s \" %[^\"] \"%s",keyword,msg,receiver); */
+   if (sscanf(buf,"%999s \" %999[^\"]\" %999s",keyword,msg,receiver) < 2){
+     /* strcpy(response,"Invalid command\n\r\n"); */
+     snprintf(response, sizeof(response), "Invalid command\n\r\n");
+     rio_writen(confd,response,strlen(response));
+     return;
+   }
 
    if (!strcmp(keyword,"msg")){
 
         pthread_mutex_lock(&mutex);
         send_msg(confd,msg,receiver,username);
         pthread_mutex_unlock(&mutex);
-   }
-  else {
-     strcpy(response,"Invalid command\n\r\n");
+  }
+ else {
+     /* strcpy(response,"Invalid command\n\r\n"); */
+     snprintf(response, sizeof(response), "Invalid command\n\r\n");
      rio_writen(confd,response,strlen(response));
 
   }
@@ -242,7 +286,7 @@ void* client_handler(void *vargp ){
   char username[bufsize];
   rio_t rio;
   struct client *user;
-  long byte_size;
+  ssize_t byte_size;
   char buf[bufsize];
   // detaching the thread from peers
   // so it no longer needs to be
@@ -251,16 +295,17 @@ void* client_handler(void *vargp ){
 
    // saving the connection fd on function stack
    int confd = *((int *)vargp);
+   free(vargp);
    rio_readinitb(&rio, confd);
 
     // read the user name as a single line , -1 is for error handling
-    if( (byte_size=rio_readlineb(&rio,username,bufsize)) == -1){
+    if( (byte_size=rio_readlineb(&rio,username,bufsize)) <= 0){
          close(confd);
-         free(vargp);
          return NULL;
     }
     //strip the newline from the string
-    username[byte_size-1]='\0';
+    if(username[byte_size-1] == '\n')
+      username[byte_size-1]='\0';
     // assign space in the global structure
     user=malloc(sizeof(struct client));
     // error handling
@@ -273,7 +318,14 @@ void* client_handler(void *vargp ){
     // user->name=username is not safe
     // as the local stack can be accessed by peer threads
     // assign space in heap
-    user->name=malloc(sizeof(username));
+    user->name=malloc(strlen(username)+1);
+    // error handling
+    if (user->name == NULL){
+      perror("memory can't be assigned");
+      free(user);
+      close(confd);
+      return NULL;
+    }
     memcpy(user->name,username,strlen(username)+1);
     user->confd=confd;
 
@@ -296,12 +348,51 @@ void* client_handler(void *vargp ){
     return NULL;
 }
 
+char * get_ip_addr(){
+
+   static char ipstr[INET6_ADDRSTRLEN];
+   struct addrinfo hints, *res, *p;
+   int status;
+
+   memset(&hints, 0, sizeof hints);
+   hints.ai_family = AF_UNSPEC; // AF_INET or AF_INET6 to force version
+   hints.ai_socktype = SOCK_STREAM;
+   hints.ai_flags = AI_PASSIVE; // use my IP
+
+   if ((status = getaddrinfo(NULL, PORTNUM, &hints, &res)) != 0) {
+       fprintf(stderr, "getaddrinfo error: %s\n", gai_strerror(status));
+       return NULL;
+   }
+
+   // loop through all the results and get the first we can
+   for(p = res; p != NULL; p = p->ai_next) {
+       void *addr;
+       // get the pointer to the address itself,
+       // different fields in IPv4 and IPv6:
+       if (p->ai_family == AF_INET) { // IPv4
+           struct sockaddr_in *ipv4 = (struct sockaddr_in *)p->ai_addr;
+           addr = &(ipv4->sin_addr);
+       } else { // IPv6
+           struct sockaddr_in6 *ipv6 = (struct sockaddr_in6 *)p->ai_addr;
+           addr = &(ipv6->sin6_addr);
+       }
+
+       // convert the IP to a string and return
+       inet_ntop(p->ai_family, addr, ipstr, sizeof ipstr);
+       break; // take the first one
+   }
+
+   freeaddrinfo(res); // free the linked list
+
+   return ipstr;
+}
+
 int main(int argc,char **argv){
   struct sockaddr_storage clientaddr;
   socklen_t clientlen;
   int listen=-1;
-  char host[1000];
-  char *port="80";
+  char *port = PORTNUM;
+  char *ip_addr = NULL;
   int *confd;
   pthread_t tid;
 
@@ -317,12 +408,19 @@ int main(int argc,char **argv){
    exit(1);
   }
 
-  printf("waiting at localhost and port '%s' \n",port);
+  ip_addr = get_ip_addr();
 
+  printf("Server is listening on %s at port '%s' \n", ip_addr, port);
   // loop to keep accepting clients
   while(1){
       // assign space in the heap [prevents data race]
       confd=malloc(sizeof(int));
+      if (confd == NULL){
+        perror("memory can't be assigned");
+        close(listen);
+        exit(1);
+      }
+      clientlen = sizeof(clientaddr);
       *confd=accept(listen, (struct sockaddr *)&clientaddr, &clientlen);
       printf("A new client is online\n");
       // assign a seperate thread to deal with the new client

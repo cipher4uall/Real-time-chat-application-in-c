@@ -12,7 +12,6 @@
 #define MAXLINE 1024 /* max line size */
 
 char prompt[]="Chatroom> ";
-int flag=0;
 /*
 get the usage of the script
 */
@@ -79,25 +78,23 @@ int connection(char* hostname, char* port){
 }
 
 // read server response
-void reader(void* var){
+void* reader(void* var){
   char buf[MAXLINE];
   rio_t rio;
-  int status;
-  int connID=(int)var;
+  ssize_t status;
+  int connID=*((int *)var);
+  free(var);
   // initialise rio data structure
   rio_readinitb(&rio, connID);
   while(1){
      while((status=rio_readlineb(&rio,buf,MAXLINE)) >0){
-          //error
-          if(status == -1)
-            exit(1);
           if(!strcmp(buf,"\r\n")){
               break;
             }
           // exit from the server
           if (!strcmp(buf,"exit")){
               close(connID);
-              exit(0);
+              return NULL;
             }
           if (!strcmp(buf,"start\n")){
 
@@ -106,6 +103,10 @@ void reader(void* var){
 
           else
              printf("%s",buf);
+      }
+      if (status <= 0) {
+          close(connID);
+          return NULL;
       }
       // print the Chatroom prompt
       printf("%s",prompt);
@@ -161,17 +162,35 @@ int main(int argc, char **argv){
        exit(1);
     }
     // add a newline
-    sprintf(username,"%s\n",username);
+    /* sprintf(username,"%s\n",username); */
+    {
+      char username_buf[MAXLINE];
+      int written = snprintf(username_buf, sizeof(username_buf), "%s\n", username);
+      if (written < 0 || (size_t)written >= sizeof(username_buf)) {
+        fprintf(stderr, "Username too long\n");
+        close(connID);
+        exit(1);
+      }
 
-    // send the server , your username
-    if(rio_writen(connID,username,strlen(username)) == -1){
-       perror("not able to send the data");
-       close(connID);
-       exit(1);
+      // send the server , your username
+      if(rio_writen(connID,username_buf,strlen(username_buf)) == -1){
+         perror("not able to send the data");
+         close(connID);
+         exit(1);
+      }
     }
 
     // a thread for reading server response
-    pthread_create(&tid,NULL,reader, (void*)connID);
+    {
+      int *connID_ptr = malloc(sizeof(*connID_ptr));
+      if (connID_ptr == NULL) {
+        perror("memory can't be assigned");
+        close(connID);
+        exit(1);
+      }
+      *connID_ptr = connID;
+      pthread_create(&tid,NULL,reader, connID_ptr);
+    }
     // print the Chatroom prompt
     printf("%s",prompt);
     while(1){

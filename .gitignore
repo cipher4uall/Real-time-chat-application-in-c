@@ -1,0 +1,10 @@
+# Build artifacts
+*.o
+/server
+/client
+
+# macOS
+.DS_Store
+
+# Markdown
+*.md
